@@ -4,10 +4,10 @@ package ipify
 
 import (
 	"errors"
+	"fmt"
 	"github.com/jpillora/backoff"
 	"io/ioutil"
 	"net/http"
-	"strconv"
 	"time"
 )
 
@@ -17,13 +17,15 @@ import (
 // backoff -- if this function fails for any reason, the request will be retried
 // up to 3 times.
 //
+// This function will return either the IPV4 or IPV6 address, which ever resolves first.
+//
 // Usage:
 //
 //		package main
 //
 //		import (
 //			"fmt"
-//			"github.com/rdegges/go-ipify"
+//			"github.com/tech10/go-ipify"
 //		)
 //
 //		func main() {
@@ -35,39 +37,55 @@ import (
 //			}
 //		}
 func GetIp() (string, error) {
+	return getIp(API_URI_64)
+}
+
+// GetIp4 returns the IPV4 address of your computer.
+// Use this as you would use the GetIp() function.
+func GetIp4() (string, error) {
+	return getIp(API_URI_4)
+}
+
+// GetIp6 returns the IPV6 address of your computer.
+// Use this as you would use the GetIp() function.
+func GetIp6() (string, error) {
+	return getIp(API_URI_6)
+}
+
+func getIp(url string) (string, error) {
 	b := &backoff.Backoff{
 		Jitter: true,
 	}
 	client := &http.Client{}
-
-	req, err := http.NewRequest("GET", API_URI, nil)
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
-		return "", errors.New("Received an invalid status code from ipify: 500. The service might be experiencing issues.")
+		return "", wrapError(err)
 	}
-
-	req.Header.Add("User-Agent", USER_AGENT)
-
+	req.Header.Set("User-Agent", USER_AGENT)
 	for tries := 0; tries < MAX_TRIES; tries++ {
-		resp, err := client.Do(req)
+		var resp *http.Response
+		resp, err = client.Do(req)
 		if err != nil {
 			d := b.Duration()
 			time.Sleep(d)
 			continue
 		}
-
 		defer resp.Body.Close()
-
-		ip, err := ioutil.ReadAll(resp.Body)
+		var ip []byte
+		ip, err = ioutil.ReadAll(resp.Body)
 		if err != nil {
-			return "", errors.New("Received an invalid status code from ipify: 500. The service might be experiencing issues.")
+			return "", wrapError(err)
 		}
-
-		if resp.StatusCode != 200 {
-			return "", errors.New("Received an invalid status code from ipify: " + strconv.Itoa(resp.StatusCode) + ". The service might be experiencing issues.")
+		if resp.StatusCode != http.StatusOK {
+			description := fmt.Sprintf("Received invalid status code %d from ipify: %s. The service might be experiencing issues.", resp.StatusCode, resp.Status)
+			return "", errors.New(description)
 		}
-
 		return string(ip), nil
 	}
+	return "", wrapError(err)
+}
 
-	return "", errors.New("The request failed because it wasn't able to reach the ipify service. This is most likely due to a networking error of some sort.")
+func wrapError(inner error) error {
+	description := fmt.Sprintf("The request failed with error %s. This is most likely due to a networking error of some sort.", inner.Error())
+	return errors.New(description)
 }
